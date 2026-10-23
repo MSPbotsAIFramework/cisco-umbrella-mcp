@@ -128,14 +128,14 @@ Copy `.env.example` to `.env` and fill in your values:
 | `MCP_TRANSPORT` | `stdio` | `stdio` (Claude Desktop) or `http` (gateway) |
 | `MCP_HTTP_PORT` | `8080` | HTTP server port |
 
-## HEADER 授权参数说明
+## HEADER authentication parameters
 
-Gateway 模式下，每个请求必须携带以下两个 HTTP Header：
+In Gateway mode, every request must carry the following two HTTP headers:
 
-| Header | 类型 | 是否必填 | 默认值 | 枚举值 | 字段描述 | Example |
+| Header | Type | Required | Default | Allowed values | Description | Example |
 |---|---|---|---|---|---|---|
-| `X-Umbrella-Api-Key` | string | 是 | 无 | 无 | Cisco Umbrella API Key（Umbrella 后台 Admin > API Keys 页面生成） | `AbCdEf1234567890` |
-| `X-Umbrella-Key-Secret` | string | 是 | 无 | 无 | Cisco Umbrella Key Secret（创建时仅显示一次，用于配合 API Key 走 client_credentials 换 token） | `xyz9876543210abcdef` |
+| `X-Umbrella-Api-Key` | string | Yes | None | None | Cisco Umbrella API Key (generated on the Admin > API Keys page in the Umbrella console) | `AbCdEf1234567890` |
+| `X-Umbrella-Key-Secret` | string | Yes | None | None | Cisco Umbrella Key Secret (shown only once at creation; used together with the API Key in the client_credentials flow to obtain a token) | `xyz9876543210abcdef` |
 
 ## Claude Desktop Setup
 
