@@ -33,30 +33,30 @@ EXPECTED_TOOLS = {
     "cisco_umbrella_get_providers_console": set(),
     # PRD-21226: admin — provider-level, same reasoning as list_customers
     "cisco_umbrella_list_api_keys": set(),
-    # PRD-21226: policies — customer-scoped, same pattern as reports.py
+    # PRD-21226: policies — customer-scoped, same pattern as reports.py.
+    # destination_list_id is optional (not in "required"): omitted -> list
+    # of lists, given -> one list's contents (review round 1 consolidation,
+    # see policies.py).
     "cisco_umbrella_list_destination_lists": {"organization_id"},
-    "cisco_umbrella_get_destination_list_destinations": {"organization_id", "destination_list_id"},
     "cisco_umbrella_list_application_lists": {"organization_id"},
     "cisco_umbrella_get_application_usage": {"organization_id"},
-    # PRD-21226: investigate — global threat intel, no customer scope
-    "cisco_umbrella_get_domain_categorization": {"domain"},
-    "cisco_umbrella_get_domain_risk_score": {"domain"},
-    "cisco_umbrella_get_domain_whois": {"domain"},
+    # PRD-21226: investigate — global threat intel, no customer scope.
+    # One tool, aspect picks categorization/risk_score/whois (review round
+    # 1 consolidation, see investigate.py).
+    "cisco_umbrella_get_domain_intel": {"domain", "aspect"},
 }
 
 # Tools that must NOT gain organization_id, for two different reasons:
 # a provider credential is the whole point of the admin/provider-level
 # ones (test_connection, list_customers, get_providers_console,
-# list_api_keys); the investigate ones are a global Cisco dataset keyed
-# by domain, not per-managed-customer data (PRD-21226 design doc OQ3).
+# list_api_keys); get_domain_intel is a global Cisco dataset keyed by
+# domain, not per-managed-customer data (PRD-21226 design doc OQ3).
 NO_ORG_SCOPE_TOOLS = {
     "cisco_umbrella_test_connection",
     "cisco_umbrella_list_customers",
     "cisco_umbrella_get_providers_console",
     "cisco_umbrella_list_api_keys",
-    "cisco_umbrella_get_domain_categorization",
-    "cisco_umbrella_get_domain_risk_score",
-    "cisco_umbrella_get_domain_whois",
+    "cisco_umbrella_get_domain_intel",
 }
 
 
@@ -279,6 +279,37 @@ async def test_list_destination_lists_is_scoped_by_organization_id():
 
 
 @pytest.mark.asyncio
+async def test_list_destination_lists_with_id_returns_one_lists_destinations():
+    """TC4 (AC2): given destination_list_id, the same tool returns one list's
+    contents instead of the list of lists — the review-round-1 consolidation
+    branch (policies.py)."""
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import policies
+
+    captured = {}
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            captured["path"] = path
+            captured["organization_id"] = organization_id
+            return [{"id": "d1", "destination": "bad.example.com", "type": 1, "comment": ""}]
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _StubClient())
+    blocks = await mcp.call_tool(
+        "cisco_umbrella_list_destination_lists",
+        {"organization_id": "1234567", "destination_list_id": "dl1"},
+    )
+    import json
+
+    result = json.loads(blocks[1]["result"])
+    assert result[0]["destination"] == "bad.example.com"
+    assert captured["path"] == "/policies/v2/destinationlists/dl1/destinations"
+    assert captured["organization_id"] == "1234567"
+
+
+@pytest.mark.asyncio
 async def test_application_lists_and_usage_round_trip():
     """TC5 (AC3): application lists and application usage round-trip through client.get."""
     import json
@@ -314,7 +345,7 @@ async def test_application_lists_and_usage_round_trip():
 
 @pytest.mark.asyncio
 async def test_domain_categorization_returns_security_categories():
-    """TC6 (AC4): domain categorization returns security/content categories, no organization_id."""
+    """TC6 (AC4): aspect="categorization" returns security/content categories, no org scope."""
     import json
 
     from mcp.server.fastmcp import FastMCP
@@ -326,6 +357,7 @@ async def test_domain_categorization_returns_security_categories():
     class _StubClient:
         async def get(self, path, params=None, organization_id=None):
             captured["path"] = path
+            captured["params"] = params
             captured["organization_id"] = organization_id
             return {
                 "example.com": {
@@ -338,17 +370,18 @@ async def test_domain_categorization_returns_security_categories():
     mcp = FastMCP(name="test")
     investigate.register(mcp, lambda: _StubClient())
     blocks = await mcp.call_tool(
-        "cisco_umbrella_get_domain_categorization", {"domain": "example.com"}
+        "cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "categorization"}
     )
     result = json.loads(blocks[1]["result"])
     assert result["example.com"]["security_categories"] == ["Malware"]
     assert captured["path"] == "/investigate/v2/domains/categorization/example.com"
+    assert captured["params"] == {"showLabels": True}
     assert captured["organization_id"] is None
 
 
 @pytest.mark.asyncio
 async def test_risk_score_and_whois_return_expected_shape():
-    """TC7 (AC5): risk-score and WHOIS tools return the expected shape, no organization_id."""
+    """TC7 (AC5): aspect="risk_score"/"whois" return the expected shape, no organization_id."""
     import json
 
     from mcp.server.fastmcp import FastMCP
@@ -371,17 +404,20 @@ async def test_risk_score_and_whois_return_expected_shape():
     class _StubClient:
         async def get(self, path, params=None, organization_id=None):
             assert organization_id is None
+            assert params is None, "aspect != categorization must not send showLabels"
             return responses[path]
 
     mcp = FastMCP(name="test")
     investigate.register(mcp, lambda: _StubClient())
 
     risk_blocks = await mcp.call_tool(
-        "cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}
+        "cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "risk_score"}
     )
     assert isinstance(json.loads(risk_blocks[1]["result"])["risk_score"], int)
 
-    whois_blocks = await mcp.call_tool("cisco_umbrella_get_domain_whois", {"domain": "example.com"})
+    whois_blocks = await mcp.call_tool(
+        "cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "whois"}
+    )
     whois = json.loads(whois_blocks[1]["result"])
     assert {"domain", "registrant", "registrar", "nameServers"} <= set(whois)
 
@@ -399,14 +435,14 @@ async def test_new_tools_return_not_configured_without_gateway_headers():
         ("cisco_umbrella_list_api_keys", {}),
         ("cisco_umbrella_list_destination_lists", {"organization_id": "1234567"}),
         (
-            "cisco_umbrella_get_destination_list_destinations",
+            "cisco_umbrella_list_destination_lists",
             {"organization_id": "1234567", "destination_list_id": "dl1"},
         ),
         ("cisco_umbrella_list_application_lists", {"organization_id": "1234567"}),
         ("cisco_umbrella_get_application_usage", {"organization_id": "1234567"}),
-        ("cisco_umbrella_get_domain_categorization", {"domain": "example.com"}),
-        ("cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}),
-        ("cisco_umbrella_get_domain_whois", {"domain": "example.com"}),
+        ("cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "categorization"}),
+        ("cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "risk_score"}),
+        ("cisco_umbrella_get_domain_intel", {"domain": "example.com", "aspect": "whois"}),
     ]
     for name, args in new_tool_calls:
         blocks = await mcp.call_tool(name, args)
@@ -434,8 +470,18 @@ async def test_new_tools_map_upstream_errors_to_envelope():
     cases = [
         (admin, "cisco_umbrella_list_api_keys", {}, 403),
         (policies, "cisco_umbrella_list_destination_lists", {"organization_id": "1"}, 404),
-        (investigate, "cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}, 429),
-        (investigate, "cisco_umbrella_get_domain_whois", {"domain": "example.com"}, 500),
+        (
+            investigate,
+            "cisco_umbrella_get_domain_intel",
+            {"domain": "example.com", "aspect": "risk_score"},
+            429,
+        ),
+        (
+            investigate,
+            "cisco_umbrella_get_domain_intel",
+            {"domain": "example.com", "aspect": "whois"},
+            500,
+        ),
     ]
     for module, name, args, status_code in cases:
         mcp = FastMCP(name="test")

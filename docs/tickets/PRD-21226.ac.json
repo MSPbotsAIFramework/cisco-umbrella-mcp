@@ -6,7 +6,7 @@
     "text": "Given a valid Umbrella API key/secret pair, When cisco_umbrella_list_api_keys is called, Then it returns the account's API key list (id, label, scope, status) and no key contains a secret field",
     "tests": ["tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret -> 1 passed (dev worktree, 2026-10-30)"
+    "evidence": "uv run pytest -q tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret -> 1 passed (dev worktree, 2026-10-30, re-run after review round 1 fixes)"
   },
   {
     "id": "TC2",
@@ -29,7 +29,7 @@
     "text": "Given organization_id=A, When cisco_umbrella_list_destination_lists is called, Then the request is scoped via X-Umbrella-OrgId at token-mint time, matching the existing reports.py pattern",
     "tests": ["tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id -> 1 passed (dev worktree, 2026-10-30)"
+    "evidence": "uv run pytest -q tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id -> 1 passed (dev worktree, 2026-10-30, re-run after review round 1 fixes; tool unchanged in behavior for this call shape, destination_list_id omitted)"
   },
   {
     "id": "TC4",
@@ -53,7 +53,7 @@
     "text": "Given organization_id=A, When cisco_umbrella_list_application_lists and cisco_umbrella_get_application_usage are called, Then both return that customer's application-list/usage data via GET /policies/v2/applicationLists and GET /policies/v2/applications/usage",
     "tests": ["tests/test_tools.py::test_application_lists_and_usage_round_trip"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_application_lists_and_usage_round_trip -> 1 passed (dev worktree, 2026-10-30)"
+    "evidence": "uv run pytest -q tests/test_tools.py::test_application_lists_and_usage_round_trip -> 1 passed (dev worktree, 2026-10-30, re-run after review round 1 fixes; this module untouched by the fix)"
   },
   {
     "id": "TC6",
@@ -62,7 +62,7 @@
     "text": "Given any domain name, When cisco_umbrella_get_domain_categorization is called, Then it returns Cisco's security/content categorization for that domain without requiring organization_id",
     "tests": ["tests/test_tools.py::test_domain_categorization_returns_security_categories"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_domain_categorization_returns_security_categories -> 1 passed (dev worktree, 2026-10-30)"
+    "evidence": "uv run pytest -q tests/test_tools.py::test_domain_categorization_returns_security_categories -> 1 passed (dev worktree, 2026-10-30). Re-run after review round 1: cisco_umbrella_get_domain_categorization was consolidated into cisco_umbrella_get_domain_intel(domain, aspect=\"categorization\") per the review's must-fix (see PRD-21226-review.md Round 1 Fixes); same capability, same test asserts the same categorization endpoint/response."
   },
   {
     "id": "TC7",
@@ -71,7 +71,7 @@
     "text": "Given any domain name, When cisco_umbrella_get_domain_risk_score and cisco_umbrella_get_domain_whois are called, Then each returns the expected shape (numeric risk score; WHOIS record with registrant/registrar/nameServers)",
     "tests": ["tests/test_tools.py::test_risk_score_and_whois_return_expected_shape"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_risk_score_and_whois_return_expected_shape -> 1 passed (dev worktree, 2026-10-30)"
+    "evidence": "uv run pytest -q tests/test_tools.py::test_risk_score_and_whois_return_expected_shape -> 1 passed (dev worktree, 2026-10-30). Re-run after review round 1: both are now cisco_umbrella_get_domain_intel(domain, aspect=\"risk_score\"|\"whois\") per the review's must-fix (see PRD-21226-review.md Round 1 Fixes); same two capabilities, same test asserts the same two response shapes."
   },
   {
     "id": "TC8",
@@ -80,7 +80,7 @@
     "text": "Given a gateway-mode request missing the X-Umbrella-Api-Key/X-Umbrella-Key-Secret headers, When any of the 8 new tools is called, Then it returns the same not_configured structured error the existing 14 tools return",
     "tests": ["tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers -> 1 passed (dev worktree, 2026-10-30). Also confirmed over the real HTTP wire: POST /mcp with no X-Umbrella-* headers against a local `mspack dev`-equivalent server (uv run cisco-umbrella-mcp, MCP_TRANSPORT=http AUTH_MODE=gateway) returned 401, and GET /health returned 200 throughout."
+    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers -> 1 passed (dev worktree, 2026-10-30, re-run after review round 1 fixes; call list updated to the consolidated tool names/params but still covers all 8 capability points, now surfaced through 6 tool names). Also confirmed over the real HTTP wire: POST /mcp with no X-Umbrella-* headers against a local server (uv run cisco-umbrella-mcp, MCP_TRANSPORT=http AUTH_MODE=gateway) returned 401, and GET /health returned 200 throughout."
   },
   {
     "id": "TC9",
@@ -89,6 +89,16 @@
     "text": "Given an upstream 401/403/404/429/5xx response from any new endpoint, When the corresponding tool is called, Then it returns the same structured error_envelope with the same status-to-code mapping as the existing tools (no stack trace, no raw HTML)",
     "tests": ["tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope"],
     "result": "pass",
-    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope -> 1 passed (dev worktree, 2026-10-30). Also confirmed live: calling cisco_umbrella_get_domain_risk_score over the real HTTP wire with placeholder (fake) credentials produced a genuine upstream 401 from api.umbrella.com, mapped to {\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\",\"retryable\":false}} with no stack trace."
+    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope -> 1 passed (dev worktree, 2026-10-30, re-run after review round 1 fixes; cases updated to call cisco_umbrella_get_domain_intel with aspect=risk_score/whois instead of the two retired tool names). Also confirmed live: calling cisco_umbrella_get_domain_intel(aspect=\"risk_score\") over the real HTTP wire with placeholder (fake) credentials produced a genuine upstream 401 from api.umbrella.com, mapped to {\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\",\"retryable\":false}} with no stack trace."
+  },
+  {
+    "id": "TC-DEV1",
+    "ac": "AC2",
+    "type": "auto",
+    "source": "dev",
+    "text": "Given organization_id=A and destination_list_id=dl1, When cisco_umbrella_list_destination_lists is called, Then it returns the domains/URLs inside that one list (via GET /policies/v2/destinationlists/{id}/destinations) instead of the list of lists",
+    "tests": ["tests/test_tools.py::test_list_destination_lists_with_id_returns_one_lists_destinations"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_list_destination_lists_with_id_returns_one_lists_destinations -> 1 passed (dev worktree, 2026-10-30). Added by dev to cover the optional-param branch introduced by the review round 1 consolidation of cisco_umbrella_get_destination_list_destinations into cisco_umbrella_list_destination_lists (see PRD-21226-review.md Round 1 Fixes); not a design-defined AC per se, but AC2's own text already anticipated this exact shape (\"or, given a destination_list_id, the destinations inside one list\")."
   }
 ]

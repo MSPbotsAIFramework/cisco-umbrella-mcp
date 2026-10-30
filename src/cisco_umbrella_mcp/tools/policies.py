@@ -9,6 +9,14 @@ Umbrella admin actually configures as policy in the console, so they are
 the "policies" deliverable here (design doc OQ1). If a dedicated
 policy-object endpoint is confirmed later, add it alongside these without
 changing this module's shape.
+
+PRD-21226 review round 1 (must-fix): cisco_umbrella_get_destination_list_
+destinations is folded into cisco_umbrella_list_destination_lists as an
+optional destination_list_id branch, rather than a second tool, to stay
+within the SOP's <=20 reference tool budget (vendor-mcp-development-sop.md
+SS2.1). AC2 already anticipated this shape ("gets back that customer's
+destination lists (or, given a destination_list_id, the destinations
+inside one list)"). See docs/tickets/PRD-21226.md "Option analysis".
 """
 
 from collections.abc import Callable
@@ -39,66 +47,43 @@ def register(mcp: FastMCP, client_factory: Callable[[], UmbrellaClient | None]) 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def cisco_umbrella_list_destination_lists(
         organization_id: Annotated[str, Field(description=_ORG_ID_DESC)],
+        destination_list_id: Annotated[
+            str | None,
+            Field(
+                description=(
+                    "Optional. Omit to list this customer's destination lists. "
+                    "Provide a destination list's id (from a previous call "
+                    "without this parameter) to instead return the domains/URLs "
+                    "inside that one list."
+                )
+            ),
+        ] = None,
         limit: Annotated[
             int, Field(description="Max results per page (default 100, hard cap 200).", ge=1)
         ] = 100,
         offset: Annotated[int | None, Field(description="Pagination offset.", ge=0)] = None,
     ) -> str:
-        """List this customer's destination lists (named allow/block domain groups).
+        """List this customer's destination lists, or one list's contents.
 
         One of the two policy object types this connector exposes (the
         other is application lists) — see README Known Gaps for why.
-        Use cisco_umbrella_get_destination_list_destinations for the
-        domains/URLs inside one list.
+        Without destination_list_id: lists the named allow/block domain
+        groups themselves. With destination_list_id: lists the
+        domains/URLs inside that one list — resolve the id from a prior
+        call without the parameter first, don't guess one.
         """
         client = client_factory()
         if client is None:
             return NO_TOKEN
         limit = min(limit, _MAX_LIMIT)
         params = {"limit": limit, "offset": offset}
+        if destination_list_id is None:
+            path = "/policies/v2/destinationlists"
+        else:
+            quoted_id = quote(destination_list_id, safe="")
+            path = f"/policies/v2/destinationlists/{quoted_id}/destinations"
         try:
-            result = await client.get(
-                "/policies/v2/destinationlists",
-                params=params,
-                organization_id=organization_id,
-            )
-            return dump_json_capped(result)
-        except UmbrellaError as e:
-            return e.to_envelope()
-
-    @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
-    async def cisco_umbrella_get_destination_list_destinations(
-        organization_id: Annotated[str, Field(description=_ORG_ID_DESC)],
-        destination_list_id: Annotated[
-            str,
-            Field(
-                description=(
-                    "Required. A destination list's id, from "
-                    "cisco_umbrella_list_destination_lists."
-                )
-            ),
-        ],
-        limit: Annotated[
-            int, Field(description="Max results per page (default 100, hard cap 200).", ge=1)
-        ] = 100,
-        offset: Annotated[int | None, Field(description="Pagination offset.", ge=0)] = None,
-    ) -> str:
-        """List the domains/URLs inside one destination list.
-
-        Resolve destination_list_id via
-        cisco_umbrella_list_destination_lists first — don't guess one.
-        """
-        client = client_factory()
-        if client is None:
-            return NO_TOKEN
-        limit = min(limit, _MAX_LIMIT)
-        params = {"limit": limit, "offset": offset}
-        try:
-            result = await client.get(
-                f"/policies/v2/destinationlists/{quote(destination_list_id, safe='')}/destinations",
-                params=params,
-                organization_id=organization_id,
-            )
+            result = await client.get(path, params=params, organization_id=organization_id)
             return dump_json_capped(result)
         except UmbrellaError as e:
             return e.to_envelope()
