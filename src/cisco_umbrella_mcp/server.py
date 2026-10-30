@@ -1,6 +1,5 @@
 import contextvars
 import sys
-from collections.abc import Callable
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -104,32 +103,30 @@ def create_mcp_server(settings: Settings) -> FastMCP:
             "malware reclassification) for a customer's network and roaming "
             "endpoints. This credential is a Managed Provider (MSSP) parent "
             "key, so every customer-scoped tool requires organization_id — "
-            "the managed customer the call is about. Typical flow: "
-            "cisco_umbrella_list_customers to resolve an organization_id, "
-            "then pass it to every other tool. Use this server for: "
-            "domain/URL query-or-block history (get_activity_dns, _proxy), "
-            "firewall allow/block events (_firewall), files later "
-            "reclassified as malware (_activity_amp_retrospective), "
-            "per-category request counts over a period (call "
-            "get_categories first, keep the ids whose type is security, "
-            "then pass them to get_summaries_by_category as categories — "
-            "unfiltered it overruns the size cap and drops exactly those "
-            "rows), deployment inventory "
-            "across its three kinds (list_networks, "
-            "list_roaming_computers, list_virtual_appliances), discovered "
-            "cloud apps/protocols (list_applications, list_protocols, "
-            "list_application_categories), and provider org/subscription "
-            "info (list_customers, get_providers_console — these three take "
-            "no organization_id). All tools are read-only; there are no "
-            "write or delete tools. App-discovery tools may return 403 on "
-            "accounts without that entitlement."
+            "resolve one via list_customers, then pass it to every other "
+            "customer-scoped tool. Covers: activity reports (get_activity_dns/"
+            "_proxy/_firewall/_activity_amp_retrospective), category counts "
+            "(get_categories then get_summaries_by_category with security "
+            "category ids — unfiltered drops them), deployment inventory "
+            "(list_networks/_roaming_computers/_virtual_appliances), app "
+            "discovery (list_applications/_protocols/_application_categories, "
+            "may 403 if unlicensed), policy objects (list_destination_lists — "
+            "pass destination_list_id to get one list's contents instead of "
+            "the list of lists — and list_application_lists/"
+            "get_application_usage), account API keys (list_api_keys — no "
+            "secret ever returned), and global domain threat intel with no "
+            "organization_id (get_domain_intel with aspect=categorization/"
+            "risk_score/whois). Provider-level (no organization_id): "
+            "list_customers, get_providers_console, list_api_keys. All tools "
+            "are read-only; there are no write or delete tools."
         ),
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
         stateless_http=True,
         json_response=True,
     )
 
-    client_factory: Callable[[], UmbrellaClient | None] = lambda: get_client_from_context(settings)
+    def client_factory() -> UmbrellaClient | None:
+        return get_client_from_context(settings)
 
     @mcp.tool(annotations=ToolAnnotations(readOnlyHint=True))
     async def cisco_umbrella_test_connection() -> str:
@@ -157,8 +154,11 @@ def create_mcp_server(settings: Settings) -> FastMCP:
         )
 
     # Register all tool modules here.
-    from .tools import reports
+    from .tools import admin, investigate, policies, reports
 
     reports.register(mcp, client_factory)
+    admin.register(mcp, client_factory)
+    policies.register(mcp, client_factory)
+    investigate.register(mcp, client_factory)
 
     return mcp
