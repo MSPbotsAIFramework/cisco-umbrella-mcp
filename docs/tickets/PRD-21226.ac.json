@@ -1,0 +1,80 @@
+[
+  {
+    "id": "TC1",
+    "ac": "AC1",
+    "type": "auto",
+    "text": "Given a valid Umbrella API key/secret pair, When cisco_umbrella_list_api_keys is called, Then it returns the account's API key list (id, label, scope, status) and no key contains a secret field",
+    "tests": ["tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret"]
+  },
+  {
+    "id": "TC2",
+    "ac": "AC1",
+    "type": "manual",
+    "text": "Given a real Managed Provider Umbrella account, When cisco_umbrella_list_api_keys is called end to end, Then the live response is a non-empty array and no item contains a secret field",
+    "steps": [
+      "Set UMBRELLA_API_KEY/UMBRELLA_KEY_SECRET to a real MSPbots test account (needs a real vendor account)",
+      "Call cisco_umbrella_list_api_keys via the local stdio server",
+      "Inspect the raw JSON response"
+    ],
+    "expect": "Non-empty array of key objects (id, label/keyType, scope, status); grep the raw response for any secret-like field and confirm none is present",
+    "result": "untested",
+    "notes": "needs a real vendor account; not executed during design"
+  },
+  {
+    "id": "TC3",
+    "ac": "AC2",
+    "type": "auto",
+    "text": "Given organization_id=A, When cisco_umbrella_list_destination_lists is called, Then the request is scoped via X-Umbrella-OrgId at token-mint time, matching the existing reports.py pattern",
+    "tests": ["tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id"]
+  },
+  {
+    "id": "TC4",
+    "ac": "AC2",
+    "type": "manual",
+    "text": "Given two different managed customers (org A, org B) on a real Managed Provider account, When cisco_umbrella_list_destination_lists is called once per org, Then the two responses are disjoint (no cross-tenant data)",
+    "steps": [
+      "Resolve two organization_id values via cisco_umbrella_list_customers (needs a real vendor account with 2+ managed customers)",
+      "Call cisco_umbrella_list_destination_lists with org A's id",
+      "Call cisco_umbrella_list_destination_lists with org B's id",
+      "Diff the two responses"
+    ],
+    "expect": "The two destination-list responses are disjoint (different ids/names), proving org A's call never leaks org B's policy data and vice versa",
+    "result": "untested",
+    "notes": "needs a real vendor account with at least 2 managed customers; mirrors the existing org-scope test already in this repo"
+  },
+  {
+    "id": "TC5",
+    "ac": "AC3",
+    "type": "auto",
+    "text": "Given organization_id=A, When cisco_umbrella_list_application_lists and cisco_umbrella_get_application_usage are called, Then both return that customer's application-list/usage data via GET /policies/v2/applicationLists and GET /policies/v2/applications/usage",
+    "tests": ["tests/test_tools.py::test_application_lists_and_usage_round_trip"]
+  },
+  {
+    "id": "TC6",
+    "ac": "AC4",
+    "type": "auto",
+    "text": "Given any domain name, When cisco_umbrella_get_domain_categorization is called, Then it returns Cisco's security/content categorization for that domain without requiring organization_id",
+    "tests": ["tests/test_tools.py::test_domain_categorization_returns_security_categories"]
+  },
+  {
+    "id": "TC7",
+    "ac": "AC5",
+    "type": "auto",
+    "text": "Given any domain name, When cisco_umbrella_get_domain_risk_score and cisco_umbrella_get_domain_whois are called, Then each returns the expected shape (numeric risk score; WHOIS record with registrant/registrar/nameServers)",
+    "tests": ["tests/test_tools.py::test_risk_score_and_whois_return_expected_shape"]
+  },
+  {
+    "id": "TC8",
+    "ac": "AC6",
+    "type": "auto",
+    "text": "Given a gateway-mode request missing the X-Umbrella-Api-Key/X-Umbrella-Key-Secret headers, When any of the 8 new tools is called, Then it returns the same not_configured structured error the existing 14 tools return",
+    "tests": ["tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers"]
+  },
+  {
+    "id": "TC9",
+    "ac": "AC7",
+    "type": "auto",
+    "text": "Given an upstream 401/403/404/429/5xx response from any new endpoint, When the corresponding tool is called, Then it returns the same structured error_envelope with the same status-to-code mapping as the existing tools (no stack trace, no raw HTML)",
+    "tests": ["tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope"]
+  }
+]
