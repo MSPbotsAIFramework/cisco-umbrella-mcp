@@ -4,7 +4,9 @@
     "ac": "AC1",
     "type": "auto",
     "text": "Given a valid Umbrella API key/secret pair, When cisco_umbrella_list_api_keys is called, Then it returns the account's API key list (id, label, scope, status) and no key contains a secret field",
-    "tests": ["tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret"]
+    "tests": ["tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_list_api_keys_returns_metadata_without_secret -> 1 passed (dev worktree, 2026-10-30)"
   },
   {
     "id": "TC2",
@@ -18,14 +20,16 @@
     ],
     "expect": "Non-empty array of key objects (id, label/keyType, scope, status); grep the raw response for any secret-like field and confirm none is present",
     "result": "untested",
-    "notes": "needs a real vendor account; not executed during design"
+    "notes": "needs a real vendor account; not executed during design or dev (no account available in either pass, per mcp-track.md 2.5 this does not block 6b). Dev also tried to re-confirm the endpoint's exact shape/pagination against Cisco's public docs and could not: docs.umbrella.com/umbrella-api/reference/getadminapikeys 301-redirects to a generic securitydocs.cisco.com landing page as of 2026-10-30 (see README Known Gaps). Flagged for post-release verification against a real account."
   },
   {
     "id": "TC3",
     "ac": "AC2",
     "type": "auto",
     "text": "Given organization_id=A, When cisco_umbrella_list_destination_lists is called, Then the request is scoped via X-Umbrella-OrgId at token-mint time, matching the existing reports.py pattern",
-    "tests": ["tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id"]
+    "tests": ["tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_list_destination_lists_is_scoped_by_organization_id -> 1 passed (dev worktree, 2026-10-30)"
   },
   {
     "id": "TC4",
@@ -40,41 +44,51 @@
     ],
     "expect": "The two destination-list responses are disjoint (different ids/names), proving org A's call never leaks org B's policy data and vice versa",
     "result": "untested",
-    "notes": "needs a real vendor account with at least 2 managed customers; mirrors the existing org-scope test already in this repo"
+    "notes": "needs a real vendor account with at least 2 managed customers; mirrors the existing org-scope test already in this repo. Not executed during design or dev (no account available in either pass, per mcp-track.md 2.5 this does not block 6b). The underlying org-scoping mechanism itself (X-Umbrella-OrgId applied at token-mint time, never on the business request) is unchanged code, reused verbatim from the already-live-verified reports.py path — see test_org_scope_is_applied_at_token_mint_not_on_the_business_request — so this gap is specifically about the Policies v2 endpoint's live response shape, not the scoping mechanism."
   },
   {
     "id": "TC5",
     "ac": "AC3",
     "type": "auto",
     "text": "Given organization_id=A, When cisco_umbrella_list_application_lists and cisco_umbrella_get_application_usage are called, Then both return that customer's application-list/usage data via GET /policies/v2/applicationLists and GET /policies/v2/applications/usage",
-    "tests": ["tests/test_tools.py::test_application_lists_and_usage_round_trip"]
+    "tests": ["tests/test_tools.py::test_application_lists_and_usage_round_trip"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_application_lists_and_usage_round_trip -> 1 passed (dev worktree, 2026-10-30)"
   },
   {
     "id": "TC6",
     "ac": "AC4",
     "type": "auto",
     "text": "Given any domain name, When cisco_umbrella_get_domain_categorization is called, Then it returns Cisco's security/content categorization for that domain without requiring organization_id",
-    "tests": ["tests/test_tools.py::test_domain_categorization_returns_security_categories"]
+    "tests": ["tests/test_tools.py::test_domain_categorization_returns_security_categories"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_domain_categorization_returns_security_categories -> 1 passed (dev worktree, 2026-10-30)"
   },
   {
     "id": "TC7",
     "ac": "AC5",
     "type": "auto",
     "text": "Given any domain name, When cisco_umbrella_get_domain_risk_score and cisco_umbrella_get_domain_whois are called, Then each returns the expected shape (numeric risk score; WHOIS record with registrant/registrar/nameServers)",
-    "tests": ["tests/test_tools.py::test_risk_score_and_whois_return_expected_shape"]
+    "tests": ["tests/test_tools.py::test_risk_score_and_whois_return_expected_shape"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_risk_score_and_whois_return_expected_shape -> 1 passed (dev worktree, 2026-10-30)"
   },
   {
     "id": "TC8",
     "ac": "AC6",
     "type": "auto",
     "text": "Given a gateway-mode request missing the X-Umbrella-Api-Key/X-Umbrella-Key-Secret headers, When any of the 8 new tools is called, Then it returns the same not_configured structured error the existing 14 tools return",
-    "tests": ["tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers"]
+    "tests": ["tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_return_not_configured_without_gateway_headers -> 1 passed (dev worktree, 2026-10-30). Also confirmed over the real HTTP wire: POST /mcp with no X-Umbrella-* headers against a local `mspack dev`-equivalent server (uv run cisco-umbrella-mcp, MCP_TRANSPORT=http AUTH_MODE=gateway) returned 401, and GET /health returned 200 throughout."
   },
   {
     "id": "TC9",
     "ac": "AC7",
     "type": "auto",
     "text": "Given an upstream 401/403/404/429/5xx response from any new endpoint, When the corresponding tool is called, Then it returns the same structured error_envelope with the same status-to-code mapping as the existing tools (no stack trace, no raw HTML)",
-    "tests": ["tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope"]
+    "tests": ["tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope"],
+    "result": "pass",
+    "evidence": "uv run pytest -q tests/test_tools.py::test_new_tools_map_upstream_errors_to_envelope -> 1 passed (dev worktree, 2026-10-30). Also confirmed live: calling cisco_umbrella_get_domain_risk_score over the real HTTP wire with placeholder (fake) credentials produced a genuine upstream 401 from api.umbrella.com, mapped to {\"error\":{\"code\":\"unauthorized\",\"message\":\"Unauthorized\",\"retryable\":false}} with no stack trace."
   }
 ]

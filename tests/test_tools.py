@@ -31,14 +31,32 @@ EXPECTED_TOOLS = {
     # provider-level: no customer scope
     "cisco_umbrella_list_customers": set(),
     "cisco_umbrella_get_providers_console": set(),
+    # PRD-21226: admin — provider-level, same reasoning as list_customers
+    "cisco_umbrella_list_api_keys": set(),
+    # PRD-21226: policies — customer-scoped, same pattern as reports.py
+    "cisco_umbrella_list_destination_lists": {"organization_id"},
+    "cisco_umbrella_get_destination_list_destinations": {"organization_id", "destination_list_id"},
+    "cisco_umbrella_list_application_lists": {"organization_id"},
+    "cisco_umbrella_get_application_usage": {"organization_id"},
+    # PRD-21226: investigate — global threat intel, no customer scope
+    "cisco_umbrella_get_domain_categorization": {"domain"},
+    "cisco_umbrella_get_domain_risk_score": {"domain"},
+    "cisco_umbrella_get_domain_whois": {"domain"},
 }
 
-# Tools that must NOT gain organization_id — a provider credential is the
-# whole point of them.
-PROVIDER_LEVEL_TOOLS = {
+# Tools that must NOT gain organization_id, for two different reasons:
+# a provider credential is the whole point of the admin/provider-level
+# ones (test_connection, list_customers, get_providers_console,
+# list_api_keys); the investigate ones are a global Cisco dataset keyed
+# by domain, not per-managed-customer data (PRD-21226 design doc OQ3).
+NO_ORG_SCOPE_TOOLS = {
     "cisco_umbrella_test_connection",
     "cisco_umbrella_list_customers",
     "cisco_umbrella_get_providers_console",
+    "cisco_umbrella_list_api_keys",
+    "cisco_umbrella_get_domain_categorization",
+    "cisco_umbrella_get_domain_risk_score",
+    "cisco_umbrella_get_domain_whois",
 }
 
 
@@ -61,7 +79,7 @@ async def test_tools_list_snapshot():
 
         # Scope must be explicit, never inferred from the token's own org.
         properties = tool.inputSchema.get("properties", {})
-        if name in PROVIDER_LEVEL_TOOLS:
+        if name in NO_ORG_SCOPE_TOOLS:
             assert "organization_id" not in properties, f"{name}: should not be customer-scoped"
         else:
             assert "organization_id" in required, f"{name}: organization_id must be required"
@@ -190,3 +208,240 @@ async def test_provider_level_calls_mint_an_unscoped_token():
 
     _, token_headers = captured["calls"][0]
     assert "X-Umbrella-OrgId" not in token_headers
+
+
+# ── PRD-21226: admin / policies / investigate tools ─────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_api_keys_returns_metadata_without_secret():
+    """TC1 (AC1): cisco_umbrella_list_api_keys returns key metadata, never a secret."""
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import admin
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            assert path == "/admin/v2/apiKeys"
+            assert organization_id is None
+            return [
+                {"id": "k1", "label": "prod", "scope": ["reports:read"], "status": "active"},
+                {
+                    "id": "k2",
+                    "label": "backup",
+                    "scope": ["admin.apikeys:read"],
+                    "status": "active",
+                },
+            ]
+
+    mcp = FastMCP(name="test")
+    admin.register(mcp, lambda: _StubClient())
+    blocks = await mcp.call_tool("cisco_umbrella_list_api_keys", {})
+    keys = json.loads(blocks[1]["result"])
+    assert len(keys) == 2
+    for key in keys:
+        assert "secret" not in key and "keySecret" not in key
+        assert {"id", "label", "scope", "status"} <= set(key)
+
+
+@pytest.mark.asyncio
+async def test_list_destination_lists_is_scoped_by_organization_id():
+    """TC3 (AC2): organization_id reaches the client as scope, matching reports.py."""
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import policies
+
+    captured = {}
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            captured["path"] = path
+            captured["params"] = params
+            captured["organization_id"] = organization_id
+            return [
+                {
+                    "id": "dl1",
+                    "name": "Blocklist",
+                    "access": "block",
+                    "isGlobal": False,
+                    "destinationCount": 3,
+                }
+            ]
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _StubClient())
+    await mcp.call_tool("cisco_umbrella_list_destination_lists", {"organization_id": "1234567"})
+    assert captured["path"] == "/policies/v2/destinationlists"
+    assert captured["organization_id"] == "1234567"
+    assert "organization_id" not in captured["params"]
+
+
+@pytest.mark.asyncio
+async def test_application_lists_and_usage_round_trip():
+    """TC5 (AC3): application lists and application usage round-trip through client.get."""
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import policies
+
+    responses = {
+        "/policies/v2/applicationLists": [
+            {"id": "al1", "name": "Approved Apps", "isDefault": True, "applicationCount": 5}
+        ],
+        "/policies/v2/applications/usage": [
+            {"applicationId": "a1", "name": "Dropbox", "category": "File Sharing", "usageCount": 42}
+        ],
+    }
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            assert organization_id == "1234567"
+            return responses[path]
+
+    mcp = FastMCP(name="test")
+    policies.register(mcp, lambda: _StubClient())
+
+    org_args = {"organization_id": "1234567"}
+    lists_blocks = await mcp.call_tool("cisco_umbrella_list_application_lists", org_args)
+    assert json.loads(lists_blocks[1]["result"]) == responses["/policies/v2/applicationLists"]
+
+    usage_blocks = await mcp.call_tool("cisco_umbrella_get_application_usage", org_args)
+    assert json.loads(usage_blocks[1]["result"]) == responses["/policies/v2/applications/usage"]
+
+
+@pytest.mark.asyncio
+async def test_domain_categorization_returns_security_categories():
+    """TC6 (AC4): domain categorization returns security/content categories, no organization_id."""
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import investigate
+
+    captured = {}
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            captured["path"] = path
+            captured["organization_id"] = organization_id
+            return {
+                "example.com": {
+                    "status": 1,
+                    "content_categories": ["Business"],
+                    "security_categories": ["Malware"],
+                }
+            }
+
+    mcp = FastMCP(name="test")
+    investigate.register(mcp, lambda: _StubClient())
+    blocks = await mcp.call_tool(
+        "cisco_umbrella_get_domain_categorization", {"domain": "example.com"}
+    )
+    result = json.loads(blocks[1]["result"])
+    assert result["example.com"]["security_categories"] == ["Malware"]
+    assert captured["path"] == "/investigate/v2/domains/categorization/example.com"
+    assert captured["organization_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_risk_score_and_whois_return_expected_shape():
+    """TC7 (AC5): risk-score and WHOIS tools return the expected shape, no organization_id."""
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.tools import investigate
+
+    responses = {
+        "/investigate/v2/domains/risk-score/example.com": {"risk_score": 12},
+        "/investigate/v2/whois/example.com": {
+            "domain": "example.com",
+            "registrant": "Example Org",
+            "registrar": "Example Registrar",
+            "created": "1995-08-14",
+            "updated": "2025-08-13",
+            "expires": "2026-08-13",
+            "nameServers": ["a.iana-servers.net", "b.iana-servers.net"],
+        },
+    }
+
+    class _StubClient:
+        async def get(self, path, params=None, organization_id=None):
+            assert organization_id is None
+            return responses[path]
+
+    mcp = FastMCP(name="test")
+    investigate.register(mcp, lambda: _StubClient())
+
+    risk_blocks = await mcp.call_tool(
+        "cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}
+    )
+    assert isinstance(json.loads(risk_blocks[1]["result"])["risk_score"], int)
+
+    whois_blocks = await mcp.call_tool("cisco_umbrella_get_domain_whois", {"domain": "example.com"})
+    whois = json.loads(whois_blocks[1]["result"])
+    assert {"domain", "registrant", "registrar", "nameServers"} <= set(whois)
+
+
+@pytest.mark.asyncio
+async def test_new_tools_return_not_configured_without_gateway_headers():
+    """TC8 (AC6): missing gateway headers -> not_configured envelope, same as the existing tools."""
+    import json
+
+    from cisco_umbrella_mcp.config import Settings
+    from cisco_umbrella_mcp.server import create_mcp_server
+
+    mcp = create_mcp_server(Settings(auth_mode="gateway"))
+    new_tool_calls = [
+        ("cisco_umbrella_list_api_keys", {}),
+        ("cisco_umbrella_list_destination_lists", {"organization_id": "1234567"}),
+        (
+            "cisco_umbrella_get_destination_list_destinations",
+            {"organization_id": "1234567", "destination_list_id": "dl1"},
+        ),
+        ("cisco_umbrella_list_application_lists", {"organization_id": "1234567"}),
+        ("cisco_umbrella_get_application_usage", {"organization_id": "1234567"}),
+        ("cisco_umbrella_get_domain_categorization", {"domain": "example.com"}),
+        ("cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}),
+        ("cisco_umbrella_get_domain_whois", {"domain": "example.com"}),
+    ]
+    for name, args in new_tool_calls:
+        blocks = await mcp.call_tool(name, args)
+        envelope = json.loads(blocks[1]["result"])
+        assert envelope["error"]["code"] == "not_configured", f"{name}: {envelope}"
+
+
+@pytest.mark.asyncio
+async def test_new_tools_map_upstream_errors_to_envelope():
+    """TC9 (AC7): upstream 403/404/429/5xx map to the existing error envelope, no stack trace."""
+    import json
+
+    from mcp.server.fastmcp import FastMCP
+
+    from cisco_umbrella_mcp.api_client import UmbrellaError
+    from cisco_umbrella_mcp.tools import admin, investigate, policies
+
+    class _FailingClient:
+        def __init__(self, status_code):
+            self._status_code = status_code
+
+        async def get(self, path, params=None, organization_id=None):
+            raise UmbrellaError(self._status_code, "boom")
+
+    cases = [
+        (admin, "cisco_umbrella_list_api_keys", {}, 403),
+        (policies, "cisco_umbrella_list_destination_lists", {"organization_id": "1"}, 404),
+        (investigate, "cisco_umbrella_get_domain_risk_score", {"domain": "example.com"}, 429),
+        (investigate, "cisco_umbrella_get_domain_whois", {"domain": "example.com"}, 500),
+    ]
+    for module, name, args, status_code in cases:
+        mcp = FastMCP(name="test")
+        module.register(mcp, lambda sc=status_code: _FailingClient(sc))
+        blocks = await mcp.call_tool(name, args)
+        text = blocks[1]["result"]
+        envelope = json.loads(text)
+        assert "code" in envelope["error"], f"{name}: {envelope}"
+        assert "Traceback" not in text and "<html" not in text.lower()
